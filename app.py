@@ -1,31 +1,7 @@
 # app.py - Secure Home Insurance Chatbot with Admin Dashboard
 # Streamlit + Groq + Lead Management
 # Run: streamlit run app.py
-# Add this to the VERY TOP of app.py
-import sys
-import http.server
-import socketserver
-import threading
-from http import HTTPStatus
 
-# Health check server in separate thread
-def run_health_check():
-    class HealthHandler(http.server.SimpleHTTPRequestHandler):
-        def do_GET(self):
-            if self.path == '/healthz':
-                self.send_response(HTTPStatus.OK)
-                self.end_headers()
-                self.wfile.write(b'OK')
-            else:
-                self.send_response(HTTPStatus.NOT_FOUND)
-                self.end_headers()
-    
-    with socketserver.TCPServer(('0.0.0.0', 8080), HealthHandler) as server:
-        server.serve_forever()
-
-# Start health check server in background
-health_thread = threading.Thread(target=run_health_check, daemon=True)
-health_thread.start()
 import os
 import uuid
 import json
@@ -40,16 +16,31 @@ import sqlite3
 import hashlib
 from pathlib import Path
 import io
-import os
-if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 8000))
-    uvicorn.run(app, host="0.0.0.0", port=port)
+import threading
+from http.server import HTTPServer, BaseHTTPRequestHandler
+
+# Simple health check server for Railway
+class HealthHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        if self.path == '/':
+            self.send_response(200)
+            self.end_headers()
+            self.wfile.write(b'OK')
+        else:
+            self.send_response(404)
+            self.end_headers()
     
-from langchain_groq import ChatGroq
-from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
-from langchain_core.runnables.history import RunnableWithMessageHistory
-from langchain_core.chat_history import BaseChatMessageHistory
-from langchain_community.chat_message_histories import StreamlitChatMessageHistory
+    def log_message(self, *args):
+        pass
+
+def run_health_server():
+    """Start health server on port 8080"""
+    server = HTTPServer(('0.0.0.0', 8080), HealthHandler)
+    server.serve_forever()
+
+# Start health server in background
+health_thread = threading.Thread(target=run_health_server, daemon=True)
+health_thread.start()
 
 # ──────────────────────────────────────────────────────────────
 # Setup & Configuration
@@ -57,6 +48,7 @@ from langchain_community.chat_message_histories import StreamlitChatMessageHisto
 
 load_dotenv()
 
+# Rest of your existing code continues from here...
 # Logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -738,6 +730,7 @@ with footer_cols[2]:
 # Hidden admin status indicator (only visible to admin)
 if st.session_state.admin_logged_in:
     st.sidebar.markdown('<span class="admin-badge">ADMIN</span>', unsafe_allow_html=True)
+
 
 
 
