@@ -1,31 +1,9 @@
-import threading
-from flask import Flask
+# app.py - Secure Home Insurance Chatbot with Admin Dashboard
+# Streamlit + Groq + Lead Management
+# Optimized for Railway deployment
+
 import os
 import sys
-
-# Create Flask app for health checks
-flask_app = Flask(__name__)
-
-@flask_app.route('/')
-@flask_app.route('/healthz')
-def health_check():
-    return 'OK', 200
-
-def run_flask():
-    flask_app.run(host='0.0.0.0', port=8080, debug=False, use_reloader=False)
-
-# Start Flask in background
-flask_thread = threading.Thread(target=run_flask, daemon=True)
-flask_thread.start()
-
-# Import Streamlit and run your app
-import streamlit as st
-from dotenv import load_dotenv
-# ... rest of your existing code ...# app.py - Secure Home Insurance Chatbot with Admin Dashboard
-# Streamlit + Groq + Lead Management
-# Run: streamlit run app.py
-
-import os
 import uuid
 import json
 import streamlit as st
@@ -42,28 +20,37 @@ import io
 import threading
 from http.server import HTTPServer, BaseHTTPRequestHandler
 
-# Simple health check server for Railway
-class HealthHandler(BaseHTTPRequestHandler):
-    def do_GET(self):
-        if self.path == '/':
-            self.send_response(200)
-            self.end_headers()
-            self.wfile.write(b'OK')
-        else:
-            self.send_response(404)
-            self.end_headers()
-    
-    def log_message(self, *args):
-        pass
+# ──────────────────────────────────────────────────────────────
+# Health Check Server for Railway
+# ──────────────────────────────────────────────────────────────
 
 def run_health_server():
-    """Start health server on port 8080"""
-    server = HTTPServer(('0.0.0.0', 8080), HealthHandler)
-    server.serve_forever()
+    """Simple health check server for Railway (runs on port 8080)"""
+    class HealthHandler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            if self.path in ['/', '/healthz', '/health']:
+                self.send_response(200)
+                self.send_header('Content-type', 'text/plain')
+                self.end_headers()
+                self.wfile.write(b'OK')
+            else:
+                self.send_response(404)
+                self.end_headers()
+        
+        def log_message(self, format, *args):
+            pass  # Suppress access logs
+    
+    try:
+        server = HTTPServer(('0.0.0.0', 8080), HealthHandler)
+        print("Health check server running on port 8080")
+        server.serve_forever()
+    except OSError as e:
+        print(f"Health server error (may be expected): {e}")
 
-# Start health server in background
-health_thread = threading.Thread(target=run_health_server, daemon=True)
-health_thread.start()
+# Start health server in background if running on Railway
+if os.environ.get('RAILWAY_ENVIRONMENT') or os.environ.get('PORT'):
+    health_thread = threading.Thread(target=run_health_server, daemon=True)
+    health_thread.start()
 
 # ──────────────────────────────────────────────────────────────
 # Setup & Configuration
@@ -71,7 +58,6 @@ health_thread.start()
 
 load_dotenv()
 
-# Rest of your existing code continues from here...
 # Logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -79,16 +65,10 @@ logger = logging.getLogger(__name__)
 # Constants
 DB_FILE = "insurance_leads.db"
 ADMIN_USERNAME = "admin"
-
-# Set admin password in .env: ADMIN_PASSWORD=your_secure_password_here
-# Or generate hash: python -c "import hashlib; print(hashlib.sha256('yourpassword'.encode()).hexdigest())"
 ADMIN_PASSWORD_HASH = os.getenv("ADMIN_PASSWORD_HASH", "")
 
 # Check API key
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
-if not GROQ_API_KEY:
-    st.error("❌ GROQ_API_KEY not found in .env file")
-    st.stop()
 
 # Initialize session states
 if "session_id" not in st.session_state:
@@ -99,6 +79,10 @@ if "admin_logged_in" not in st.session_state:
     st.session_state.admin_logged_in = False
 if "user_leads" not in st.session_state:
     st.session_state.user_leads = []
+if "show_admin" not in st.session_state:
+    st.session_state.show_admin = False
+if "show_quick_form" not in st.session_state:
+    st.session_state.show_quick_form = False
 
 # ──────────────────────────────────────────────────────────────
 # Database Setup (Secure)
@@ -227,49 +211,74 @@ init_database()
 # LLM Setup
 # ──────────────────────────────────────────────────────────────
 
-llm = ChatGroq(
-    model="llama-3.1-8b-instant",
-    temperature=0.3,
-    groq_api_key=GROQ_API_KEY,
-    max_tokens=1024,
-)
+def setup_llm():
+    """Initialize LLM with error handling"""
+    if not GROQ_API_KEY:
+        st.error("❌ GROQ_API_KEY not found in environment variables")
+        return None
+    
+    try:
+        from langchain_groq import ChatGroq
+        from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
+        from langchain_core.runnables.history import RunnableWithMessageHistory
+        from langchain_core.chat_history import BaseChatMessageHistory
+        from langchain_community.chat_message_histories import StreamlitChatMessageHistory
+        
+        llm = ChatGroq(
+            model="llama-3.1-8b-instant",
+            temperature=0.3,
+            groq_api_key=GROQ_API_KEY,
+            max_tokens=1024,
+        )
+        
+        system_prompt = """
+        You are a professional home insurance assistant designed to help users understand insurance options.
+        Your role:
+        1. Provide helpful information about home insurance
+        2. Answer questions about coverage, policies, and claims
+        3. Guide users on getting quotes
+        4. Collect information naturally if users are interested
+        5. Be warm, professional, and accurate
+        6. Always remind users to speak with licensed agents for official quotes
+        
+        When users ask about quotes, you can ask for:
+        - Location (city/state)
+        - Approximate home value
+        - Type of coverage needed
+        - Any specific concerns (flood, earthquake, etc.)
+        
+        IMPORTANT: Never pressure users for personal information. Only ask if they seem genuinely interested.
+        """
+        
+        prompt = ChatPromptTemplate.from_messages([
+            ("system", system_prompt),
+            MessagesPlaceholder(variable_name="history"),
+            ("human", "{input}")
+        ])
+        
+        runnable = prompt | llm
+        
+        def get_session_history(session_id: str) -> BaseChatMessageHistory:
+            return StreamlitChatMessageHistory(key=f"history_{session_id}")
+        
+        chain = RunnableWithMessageHistory(
+            runnable,
+            get_session_history,
+            input_messages_key="input",
+            history_messages_key="history"
+        )
+        
+        return chain
+        
+    except ImportError as e:
+        st.error(f"❌ Failed to import required packages: {e}")
+        return None
+    except Exception as e:
+        st.error(f"❌ Failed to initialize LLM: {e}")
+        return None
 
-system_prompt = """
-You are a professional home insurance assistant designed to help users understand insurance options.
-Your role:
-1. Provide helpful information about home insurance
-2. Answer questions about coverage, policies, and claims
-3. Guide users on getting quotes
-4. Collect information naturally if users are interested
-5. Be warm, professional, and accurate
-6. Always remind users to speak with licensed agents for official quotes
-
-When users ask about quotes, you can ask for:
-- Location (city/state)
-- Approximate home value
-- Type of coverage needed
-- Any specific concerns (flood, earthquake, etc.)
-
-IMPORTANT: Never pressure users for personal information. Only ask if they seem genuinely interested.
-"""
-
-prompt = ChatPromptTemplate.from_messages([
-    ("system", system_prompt),
-    MessagesPlaceholder(variable_name="history"),
-    ("human", "{input}")
-])
-
-runnable = prompt | llm
-
-def get_session_history(session_id: str) -> BaseChatMessageHistory:
-    return StreamlitChatMessageHistory(key=f"history_{session_id}")
-
-chain = RunnableWithMessageHistory(
-    runnable,
-    get_session_history,
-    input_messages_key="input",
-    history_messages_key="history"
-)
+# Initialize LLM
+chain = setup_llm()
 
 # ──────────────────────────────────────────────────────────────
 # Helper Functions
@@ -310,7 +319,7 @@ def analyze_conversation_for_lead(messages: List[Dict]) -> Dict:
         'location': None,
         'home_value_range': None,
         'interest_level': 'low',
-        'conversation_summary': full_convo[:500]  # First 500 chars
+        'conversation_summary': full_convo[:500]
     }
     
     # Extract contact info
@@ -338,19 +347,6 @@ def analyze_conversation_for_lead(messages: List[Dict]) -> Dict:
         lead['interest_level'] = 'medium'
     
     return lead
-
-def estimate_risk_factor(location: str) -> Dict:
-    """Simple risk estimation"""
-    if not location:
-        return {"risk_level": "Standard", "multiplier": 1.0}
-    
-    loc = location.lower()
-    if any(x in loc for x in ["florida", "louisiana", "texas coast", "hurricane"]):
-        return {"risk_level": "High", "multiplier": 2.0}
-    elif any(x in loc for x in ["california", "wildfire", "earthquake"]):
-        return {"risk_level": "Elevated", "multiplier": 1.5}
-    else:
-        return {"risk_level": "Standard", "multiplier": 1.0}
 
 # ──────────────────────────────────────────────────────────────
 # Admin Dashboard Functions
@@ -380,10 +376,7 @@ def show_admin_dashboard():
                 )
             
             with col2:
-                date_filter = st.date_input(
-                    "Filter by Date",
-                    value=None
-                )
+                date_filter = st.date_input("Filter by Date", value=None)
             
             # Apply filters
             if interest_filter != "All":
@@ -485,6 +478,7 @@ def show_admin_dashboard():
     # Logout button
     if st.sidebar.button("🚪 Logout", type="primary"):
         st.session_state.admin_logged_in = False
+        st.session_state.show_admin = False
         log_admin_action("logout")
         st.rerun()
 
@@ -492,271 +486,292 @@ def show_admin_dashboard():
 # Streamlit UI Configuration
 # ──────────────────────────────────────────────────────────────
 
-st.set_page_config(
-    page_title="Home Insurance Assistant",
-    page_icon="🏠",
-    layout="wide",
-    initial_sidebar_state="expanded"
-)
-
-# Custom CSS
-st.markdown("""
-<style>
-    .main-header {
-        text-align: center;
-        padding: 1rem 0;
-    }
-    .chat-message {
-        padding: 1rem;
-        border-radius: 0.5rem;
-        margin-bottom: 0.5rem;
-    }
-    .user-message {
-        background-color: #e3f2fd;
-    }
-    .assistant-message {
-        background-color: #f5f5f5;
-    }
-    .stButton>button {
-        border-radius: 0.5rem;
-        font-weight: 500;
-    }
-    .admin-badge {
-        background-color: #dc3545;
-        color: white;
-        padding: 0.25rem 0.5rem;
-        border-radius: 0.25rem;
-        font-size: 0.75rem;
-        margin-left: 0.5rem;
-    }
-    .footer-column {
-        text-align: center;
-        padding: 1rem;
-    }
-</style>
-""", unsafe_allow_html=True)
-
-# ──────────────────────────────────────────────────────────────
-# Sidebar (Visible to All Users)
-# ──────────────────────────────────────────────────────────────
-
-with st.sidebar:
-    # Logo and title
+def main():
+    """Main Streamlit application"""
+    
+    # Page config
+    st.set_page_config(
+        page_title="Home Insurance Assistant",
+        page_icon="🏠",
+        layout="wide",
+        initial_sidebar_state="expanded"
+    )
+    
+    # Check if LLM is initialized
+    if not chain:
+        st.error("Application initialization failed. Please check the logs.")
+        return
+    
+    # Custom CSS
     st.markdown("""
-    <div style="text-align: center;">
-        <h1 style="font-size: 1.8rem;">🏠</h1>
-        <h2>Insurance Assistant</h2>
+    <style>
+        .main-header {
+            text-align: center;
+            padding: 1rem 0;
+        }
+        .chat-message {
+            padding: 1rem;
+            border-radius: 0.5rem;
+            margin-bottom: 0.5rem;
+        }
+        .user-message {
+            background-color: #e3f2fd;
+        }
+        .assistant-message {
+            background-color: #f5f5f5;
+        }
+        .stButton>button {
+            border-radius: 0.5rem;
+            font-weight: 500;
+        }
+        .admin-badge {
+            background-color: #dc3545;
+            color: white;
+            padding: 0.25rem 0.5rem;
+            border-radius: 0.25rem;
+            font-size: 0.75rem;
+            margin-left: 0.5rem;
+        }
+        .footer-column {
+            text-align: center;
+            padding: 1rem;
+        }
+    </style>
+    """, unsafe_allow_html=True)
+    
+    # ──────────────────────────────────────────────────────────────
+    # Sidebar (Visible to All Users)
+    # ──────────────────────────────────────────────────────────────
+    
+    with st.sidebar:
+        # Logo and title
+        st.markdown("""
+        <div style="text-align: center;">
+            <h1 style="font-size: 1.8rem;">🏠</h1>
+            <h2>Insurance Assistant</h2>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        st.divider()
+        
+        # Admin Login Section
+        with st.expander("🔒 Admin Access", expanded=False):
+            if not st.session_state.admin_logged_in:
+                admin_password = st.text_input(
+                    "Admin Password", 
+                    type="password",
+                    help="Enter admin password to access dashboard"
+                )
+                
+                col1, col2 = st.columns(2)
+                with col1:
+                    if st.button("Login", use_container_width=True):
+                        if admin_password and check_admin_password(admin_password):
+                            st.session_state.admin_logged_in = True
+                            log_admin_action("login")
+                            st.success("Admin login successful!")
+                            st.rerun()
+                        elif admin_password:
+                            st.error("Incorrect password")
+                with col2:
+                    if st.button("Reset", use_container_width=True, type="secondary"):
+                        st.rerun()
+            else:
+                st.success("✅ Admin logged in")
+                if st.button("Go to Dashboard", use_container_width=True):
+                    st.session_state.show_admin = True
+                    st.rerun()
+        
+        st.divider()
+        
+        # User Actions
+        st.header("Quick Actions")
+        
+        if st.button("🔄 New Conversation", use_container_width=True):
+            st.session_state.messages = []
+            st.session_state.session_id = str(uuid.uuid4())
+            st.rerun()
+        
+        if st.button("📝 Quick Quote Form", use_container_width=True):
+            st.session_state.show_quick_form = True
+            st.rerun()
+        
+        st.divider()
+        
+        # Information
+        st.caption("""
+        **About this assistant:**
+        - Provides insurance information
+        - Helps compare coverage options
+        - Guides you through quotes
+        - Your data is private and secure
+        """)
+        
+        # Privacy link
+        st.markdown("[Privacy Policy](#)")
+    
+    # ──────────────────────────────────────────────────────────────
+    # Main Content Area
+    # ──────────────────────────────────────────────────────────────
+    
+    # Check if admin is viewing dashboard
+    if st.session_state.show_admin and st.session_state.admin_logged_in:
+        show_admin_dashboard()
+        return
+    
+    # Main Chat Interface
+    st.markdown("""
+    <div class="main-header">
+        <h1>Home Insurance Assistant</h1>
+        <p>Get answers, compare coverage, and explore your options</p>
     </div>
     """, unsafe_allow_html=True)
     
-    st.divider()
-    
-    # Admin Login Section (Collapsible)
-    with st.expander("🔒 Admin Access", expanded=False):
-        if not st.session_state.admin_logged_in:
-            admin_password = st.text_input(
-                "Admin Password", 
-                type="password",
-                help="Enter admin password to access dashboard"
-            )
-            
+    # Show quick quote form if requested
+    if st.session_state.show_quick_form:
+        st.subheader("📋 Quick Quote Request")
+        
+        with st.form("quick_quote_form"):
             col1, col2 = st.columns(2)
             with col1:
-                if st.button("Login", use_container_width=True):
-                    if admin_password and check_admin_password(admin_password):
-                        st.session_state.admin_logged_in = True
-                        log_admin_action("login")
-                        st.success("Admin login successful!")
-                        st.rerun()
-                    elif admin_password:
-                        st.error("Incorrect password")
+                name = st.text_input("Your Name")
+                email = st.text_input("Email Address")
             with col2:
-                if st.button("Reset", use_container_width=True, type="secondary"):
+                location = st.text_input("City, State")
+                home_value = st.selectbox(
+                    "Home Value Range",
+                    ["Under $200k", "$200k-$500k", "$500k-$1M", "Over $1M", "Not sure"]
+                )
+            
+            submitted = st.form_submit_button("Get Free Quotes")
+            
+            if submitted:
+                if email and "@" in email:
+                    lead_data = {
+                        'name': name,
+                        'email': email,
+                        'phone': None,
+                        'location': location,
+                        'home_value_range': home_value,
+                        'interest_level': 'high',
+                        'conversation_summary': 'Quick form submission'
+                    }
+                    save_lead_to_db(lead_data)
+                    st.session_state.user_leads.append(lead_data)
+                    st.success("✅ Thank you! We'll contact you with personalized quotes.")
+                    st.session_state.show_quick_form = False
                     st.rerun()
+                else:
+                    st.error("Please enter a valid email address")
+    
+    # Display chat messages
+    for message in st.session_state.messages:
+        with st.chat_message(message["role"]):
+            st.markdown(message["content"])
+    
+    # User input
+    if user_input := st.chat_input("Type your question about insurance..."):
+        user_input = user_input.strip()
+        
+        # Input validation
+        if len(user_input) < 2:
+            st.warning("Please type a longer message")
+        elif len(user_input) > 800:
+            st.warning("Message is too long. Please keep it under 800 characters.")
+        elif re.search(r'\b(fuck|shit|damn|asshole|bitch)\b', user_input.lower()):
+            st.warning("Please keep the conversation professional.")
         else:
-            st.success("✅ Admin logged in")
-            if st.button("Go to Dashboard", use_container_width=True):
+            # Add user message
+            st.session_state.messages.append({"role": "user", "content": user_input})
+            with st.chat_message("user"):
+                st.markdown(user_input)
+            
+            # Generate response
+            with st.chat_message("assistant"):
+                with st.spinner("Thinking..."):
+                    try:
+                        response = chain.invoke(
+                            {"input": user_input},
+                            config={"configurable": {"session_id": st.session_state.session_id}}
+                        )
+                        
+                        reply = response.content if hasattr(response, "content") else str(response)
+                        
+                        # Check for contact info and save lead
+                        contact_info = extract_contact_info(user_input)
+                        if contact_info['email'] or contact_info['phone']:
+                            st.success("✅ Contact info received! We'll follow up with more information.")
+                            
+                            # Analyze conversation and save lead
+                            lead_data = analyze_conversation_for_lead(st.session_state.messages)
+                            lead_data.update(contact_info)
+                            save_lead_to_db(lead_data)
+                            st.session_state.user_leads.append(lead_data)
+                        
+                        # Enhance quote responses
+                        quote_triggers = ["quote", "price", "how much", "cost", "rate", "premium"]
+                        if any(trigger in user_input.lower() for trigger in quote_triggers):
+                            if not (contact_info['email'] or contact_info['phone']):
+                                reply += "\n\n**💡 Want personalized quotes?** Share your email for quotes from our partner carriers."
+                        
+                        st.markdown(reply)
+                        st.session_state.messages.append({"role": "assistant", "content": reply})
+                        
+                    except Exception as e:
+                        logger.error(f"Chat error: {str(e)}")
+                        error_msg = "I apologize for the technical issue. Please try again or use the quick quote form."
+                        st.error(error_msg)
+                        st.session_state.messages.append({"role": "assistant", "content": error_msg})
+    
+    # Footer
+    st.divider()
+    
+    # Footer columns
+    footer_cols = st.columns(3)
+    with footer_cols[0]:
+        st.markdown('<div class="footer-column">', unsafe_allow_html=True)
+        st.markdown("**🔒 Secure & Private**")
+        st.markdown("Your data is protected")
+        st.markdown('</div>', unsafe_allow_html=True)
+        
+    with footer_cols[1]:
+        st.markdown('<div class="footer-column">', unsafe_allow_html=True)
+        st.markdown("**📞 Agent Support**")
+        st.markdown("Available 9am-6pm EST")
+        st.markdown('</div>', unsafe_allow_html=True)
+        
+    with footer_cols[2]:
+        st.markdown('<div class="footer-column">', unsafe_allow_html=True)
+        if st.session_state.admin_logged_in:
+            st.markdown("**👑 Admin Mode**")
+            if st.button("View Dashboard", type="secondary", key="footer_dash"):
                 st.session_state.show_admin = True
                 st.rerun()
+        else:
+            st.markdown("**🏠 Home Insurance**")
+            st.markdown("Expert guidance")
+        st.markdown('</div>', unsafe_allow_html=True)
     
-    st.divider()
-    
-    # User Actions
-    st.header("Quick Actions")
-    
-    if st.button("🔄 New Conversation", use_container_width=True):
-        st.session_state.messages = []
-        st.session_state.session_id = str(uuid.uuid4())
-        st.rerun()
-    
-    if st.button("📝 Quick Quote Form", use_container_width=True):
-        # Store in session to show form in main area
-        st.session_state.show_quick_form = True
-        st.rerun()
-    
-    st.divider()
-    
-    # Information
-    st.caption("""
-    **About this assistant:**
-    - Provides insurance information
-    - Helps compare coverage options
-    - Guides you through quotes
-    - Your data is private and secure
-    """)
-    
-    # Privacy link
-    st.markdown("[Privacy Policy](#)")
-
-# ──────────────────────────────────────────────────────────────
-# Main Content Area
-# ──────────────────────────────────────────────────────────────
-
-# Check if admin is viewing dashboard
-if st.session_state.get("show_admin", False) and st.session_state.admin_logged_in:
-    show_admin_dashboard()
-    st.stop()
-
-# Main Chat Interface
-st.markdown("""
-<div class="main-header">
-    <h1>Home Insurance Assistant</h1>
-    <p>Get answers, compare coverage, and explore your options</p>
-</div>
-""", unsafe_allow_html=True)
-
-# Show quick quote form if requested
-if st.session_state.get("show_quick_form", False):
-    st.subheader("📋 Quick Quote Request")
-    
-    with st.form("quick_quote_form"):
-        col1, col2 = st.columns(2)
-        with col1:
-            name = st.text_input("Your Name")
-            email = st.text_input("Email Address")
-        with col2:
-            location = st.text_input("City, State")
-            home_value = st.selectbox(
-                "Home Value Range",
-                ["Under $200k", "$200k-$500k", "$500k-$1M", "Over $1M", "Not sure"]
-            )
-        
-        submitted = st.form_submit_button("Get Free Quotes")
-        
-        if submitted:
-            if email and "@" in email:
-                lead_data = {
-                    'name': name,
-                    'email': email,
-                    'phone': None,
-                    'location': location,
-                    'home_value_range': home_value,
-                    'interest_level': 'high',
-                    'conversation_summary': 'Quick form submission'
-                }
-                save_lead_to_db(lead_data)
-                st.session_state.user_leads.append(lead_data)
-                st.success("✅ Thank you! We'll contact you with personalized quotes.")
-                st.session_state.show_quick_form = False
-                st.rerun()
-            else:
-                st.error("Please enter a valid email address")
-
-# Display chat messages
-for message in st.session_state.messages:
-    with st.chat_message(message["role"]):
-        st.markdown(message["content"])
-
-# User input
-if user_input := st.chat_input("Type your question about insurance..."):
-    user_input = user_input.strip()
-    
-    # Input validation
-    if len(user_input) < 2:
-        st.warning("Please type a longer message")
-    elif len(user_input) > 800:
-        st.warning("Message is too long. Please keep it under 800 characters.")
-    elif re.search(r'\b(fuck|shit|damn|asshole|bitch)\b', user_input.lower()):
-        st.warning("Please keep the conversation professional.")
-    else:
-        # Add user message
-        st.session_state.messages.append({"role": "user", "content": user_input})
-        with st.chat_message("user"):
-            st.markdown(user_input)
-        
-        # Generate response
-        with st.chat_message("assistant"):
-            with st.spinner("Thinking..."):
-                try:
-                    response = chain.invoke(
-                        {"input": user_input},
-                        config={"configurable": {"session_id": st.session_state.session_id}}
-                    )
-                    
-                    reply = response.content if hasattr(response, "content") else str(response)
-                    
-                    # Check for contact info and save lead
-                    contact_info = extract_contact_info(user_input)
-                    if contact_info['email'] or contact_info['phone']:
-                        st.success("✅ Contact info received! We'll follow up with more information.")
-                        
-                        # Analyze conversation and save lead
-                        lead_data = analyze_conversation_for_lead(st.session_state.messages)
-                        lead_data.update(contact_info)
-                        save_lead_to_db(lead_data)
-                        st.session_state.user_leads.append(lead_data)
-                    
-                    # Enhance quote responses
-                    quote_triggers = ["quote", "price", "how much", "cost", "rate", "premium"]
-                    if any(trigger in user_input.lower() for trigger in quote_triggers):
-                        if not (contact_info['email'] or contact_info['phone']):
-                            reply += "\n\n**💡 Want personalized quotes?** Share your email for quotes from our partner carriers."
-                    
-                    st.markdown(reply)
-                    st.session_state.messages.append({"role": "assistant", "content": reply})
-                    
-                except Exception as e:
-                    logger.error(f"Chat error: {str(e)}")
-                    error_msg = "I apologize for the technical issue. Please try again or use the quick quote form."
-                    st.error(error_msg)
-                    st.session_state.messages.append({"role": "assistant", "content": error_msg})
-
-# Footer
-st.divider()
-
-# New footer with better spacing
-footer_cols = st.columns(3)
-with footer_cols[0]:
-    st.markdown('<div class="footer-column">', unsafe_allow_html=True)
-    st.markdown("**🔒 Secure & Private**")
-    st.markdown("Your data is protected")
-    st.markdown('</div>', unsafe_allow_html=True)
-    
-with footer_cols[1]:
-    st.markdown('<div class="footer-column">', unsafe_allow_html=True)
-    st.markdown("**📞 Agent Support**")
-    st.markdown("Available 9am-6pm EST")
-    st.markdown('</div>', unsafe_allow_html=True)
-    
-with footer_cols[2]:
-    st.markdown('<div class="footer-column">', unsafe_allow_html=True)
+    # Hidden admin status indicator
     if st.session_state.admin_logged_in:
-        st.markdown("**👑 Admin Mode**")
-        if st.button("View Dashboard", type="secondary", key="footer_dash"):
-            st.session_state.show_admin = True
-            st.rerun()
-    else:
-        st.markdown("**🏠 Home Insurance**")
-        st.markdown("Expert guidance")
-    st.markdown('</div>', unsafe_allow_html=True)
+        st.sidebar.markdown('<span class="admin-badge">ADMIN</span>', unsafe_allow_html=True)
 
-# Hidden admin status indicator (only visible to admin)
-if st.session_state.admin_logged_in:
-    st.sidebar.markdown('<span class="admin-badge">ADMIN</span>', unsafe_allow_html=True)
+# ──────────────────────────────────────────────────────────────
+# Application Entry Point
+# ──────────────────────────────────────────────────────────────
 
-
-
-
-
-
-
+if __name__ == "__main__":
+    # Check if we're running with streamlit run
+    try:
+        from streamlit.runtime.scriptrunner import get_script_run_ctx
+        if get_script_run_ctx():
+            main()
+    except:
+        # If not running with streamlit, just print a message
+        print("This application is designed to run with Streamlit.")
+        print("Run with: streamlit run app.py")
+        
+        # Keep the health server running for Railway
+        if os.environ.get('RAILWAY_ENVIRONMENT'):
+            print("Running health server for Railway deployment...")
+            run_health_server()
