@@ -1,7 +1,31 @@
 # app.py - Secure Home Insurance Chatbot with Admin Dashboard
 # Streamlit + Groq + Lead Management
 # Run: streamlit run app.py
+# Add this to the VERY TOP of app.py
+import sys
+import http.server
+import socketserver
+import threading
+from http import HTTPStatus
 
+# Health check server in separate thread
+def run_health_check():
+    class HealthHandler(http.server.SimpleHTTPRequestHandler):
+        def do_GET(self):
+            if self.path == '/healthz':
+                self.send_response(HTTPStatus.OK)
+                self.end_headers()
+                self.wfile.write(b'OK')
+            else:
+                self.send_response(HTTPStatus.NOT_FOUND)
+                self.end_headers()
+    
+    with socketserver.TCPServer(('0.0.0.0', 8080), HealthHandler) as server:
+        server.serve_forever()
+
+# Start health check server in background
+health_thread = threading.Thread(target=run_health_check, daemon=True)
+health_thread.start()
 import os
 import uuid
 import json
@@ -715,6 +739,7 @@ with footer_cols[2]:
 # Hidden admin status indicator (only visible to admin)
 if st.session_state.admin_logged_in:
     st.sidebar.markdown('<span class="admin-badge">ADMIN</span>', unsafe_allow_html=True)
+
 
 
 
