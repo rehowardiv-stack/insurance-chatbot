@@ -40,7 +40,6 @@ import sqlite3
 import hashlib
 from pathlib import Path
 import io
-import uvicorn
 import os
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8000))
@@ -739,6 +738,7 @@ with footer_cols[2]:
 # Hidden admin status indicator (only visible to admin)
 if st.session_state.admin_logged_in:
     st.sidebar.markdown('<span class="admin-badge">ADMIN</span>', unsafe_allow_html=True)
+
 
 
 
