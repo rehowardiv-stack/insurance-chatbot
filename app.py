@@ -25,7 +25,7 @@ from http.server import HTTPServer, BaseHTTPRequestHandler
 # ──────────────────────────────────────────────────────────────
 
 def run_health_server():
-    """Simple health check server for Railway (runs on port 8080)"""
+    """Simple health check server for Railway (runs on port 5000)"""
     class HealthHandler(BaseHTTPRequestHandler):
         def do_GET(self):
             if self.path in ['/', '/healthz', '/health']:
@@ -775,3 +775,4 @@ if __name__ == "__main__":
         if os.environ.get('RAILWAY_ENVIRONMENT'):
             print("Running health server for Railway deployment...")
             run_health_server()
+
