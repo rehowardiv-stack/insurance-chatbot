@@ -22,7 +22,14 @@ from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.runnables.history import RunnableWithMessageHistory
 from langchain_core.chat_history import BaseChatMessageHistory
 from langchain_community.chat_message_histories import StreamlitChatMessageHistory
+from fastapi import FastAPI
+from starlette.responses import PlainTextResponse
 
+health_app = FastAPI()
+
+@health_app.get("/healthz")
+async def healthz():
+    return PlainTextResponse("OK")
 # ──────────────────────────────────────────────────────────────
 # Setup & Configuration
 # ──────────────────────────────────────────────────────────────
@@ -710,3 +717,4 @@ with footer_cols[2]:
 # Hidden admin status indicator (only visible to admin)
 if st.session_state.admin_logged_in:
     st.sidebar.markdown('<span class="admin-badge">ADMIN</span>', unsafe_allow_html=True)
+
