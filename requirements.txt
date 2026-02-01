@@ -3,5 +3,3 @@ langchain
 langchain-groq
 langchain-community
 python-dotenv
-fastapi
-uvicorn
