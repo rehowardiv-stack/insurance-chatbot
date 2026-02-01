@@ -16,7 +16,12 @@ import sqlite3
 import hashlib
 from pathlib import Path
 import io
-
+import uvicorn
+import os
+if __name__ == "__main__":
+    port = int(os.environ.get("PORT", 8000))
+    uvicorn.run(app, host="0.0.0.0", port=port)
+    
 from langchain_groq import ChatGroq
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.runnables.history import RunnableWithMessageHistory
@@ -710,5 +715,6 @@ with footer_cols[2]:
 # Hidden admin status indicator (only visible to admin)
 if st.session_state.admin_logged_in:
     st.sidebar.markdown('<span class="admin-badge">ADMIN</span>', unsafe_allow_html=True)
+
 
 
