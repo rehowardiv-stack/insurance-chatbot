@@ -1,4 +1,27 @@
-# app.py - Secure Home Insurance Chatbot with Admin Dashboard
+import threading
+from flask import Flask
+import os
+import sys
+
+# Create Flask app for health checks
+flask_app = Flask(__name__)
+
+@flask_app.route('/')
+@flask_app.route('/healthz')
+def health_check():
+    return 'OK', 200
+
+def run_flask():
+    flask_app.run(host='0.0.0.0', port=8080, debug=False, use_reloader=False)
+
+# Start Flask in background
+flask_thread = threading.Thread(target=run_flask, daemon=True)
+flask_thread.start()
+
+# Import Streamlit and run your app
+import streamlit as st
+from dotenv import load_dotenv
+# ... rest of your existing code ...# app.py - Secure Home Insurance Chatbot with Admin Dashboard
 # Streamlit + Groq + Lead Management
 # Run: streamlit run app.py
 
@@ -730,6 +753,7 @@ with footer_cols[2]:
 # Hidden admin status indicator (only visible to admin)
 if st.session_state.admin_logged_in:
     st.sidebar.markdown('<span class="admin-badge">ADMIN</span>', unsafe_allow_html=True)
+
 
 
 
